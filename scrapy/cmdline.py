@@ -119,6 +119,9 @@ def execute(argv=None, settings=None):
     # ------------------------------------------------------------------
 
     inproject = inside_project()
+    # cmds is a dict contains all commands, key is command name,
+    # value is a instance of command class defined in scrapy/commands/
+    # directory. See scrapy/command.py for base definations
     cmds = _get_commands_dict(settings, inproject)
     cmdname = _pop_command_name(argv)
     parser = optparse.OptionParser(formatter=optparse.TitledHelpFormatter(), \

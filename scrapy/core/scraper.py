@@ -23,6 +23,8 @@ class Slot(object):
     MIN_RESPONSE_SIZE = 1024
 
     def __init__(self, max_active_size=5000000):
+        # use max_active_size to avoid parallel multiple items,
+        # and avoid out of memory.
         self.max_active_size = max_active_size
         self.queue = deque()
         self.active = set()
@@ -58,10 +60,14 @@ class Slot(object):
         return self.active_size > self.max_active_size
 
 class Scraper(object):
-
+    """
+    what is scraper for? like extractor or linkcrawler in weibonews, just
+    scrape some useful information from downloaded web page.
+    """
     def __init__(self, crawler):
         self.slot = None
         self.spidermw = SpiderMiddlewareManager.from_crawler(crawler)
+        # item processor: scrapy.contrib.pipeline.ItemPipelineManager
         itemproc_cls = load_object(crawler.settings['ITEM_PROCESSOR'])
         self.itemproc = itemproc_cls.from_crawler(crawler)
         self.concurrent_items = crawler.settings.getint('CONCURRENT_ITEMS')
@@ -72,7 +78,12 @@ class Scraper(object):
     @defer.inlineCallbacks
     def open_spider(self, spider):
         """Open the given spider for scraping and allocate resources for it"""
+        # when open spider in scraper, just allocate a slot for spider, and then
+        # fire open_spider execution in item middleware.
         self.slot = Slot()
+        # open_spider results in execute all the open_spider method in
+        # all middlewares, here yield a DeferredList, when will the generator
+        # resume? after all the methods finish executing? yes.
         yield self.itemproc.open_spider(spider)
 
     def close_spider(self, spider):
@@ -124,6 +135,9 @@ class Scraper(object):
         """Handle the different cases of request's result been a Response or a
         Failure"""
         if not isinstance(request_result, Failure):
+            # in spider middleware, call input middleware, passed function
+            # (self.call_spider), and output middleware, and return a deferred
+            # witch will be called in next reactor loop
             return self.spidermw.scrape_response(self.call_spider, \
                 request_result, request, spider)
         else:
@@ -134,6 +148,8 @@ class Scraper(object):
 
     def call_spider(self, result, request, spider):
         result.request = request
+        # defer_result will return a deferred object, the callback will
+        # be executed in next reactor loop
         dfd = defer_result(result)
         dfd.addCallbacks(request.callback or spider.parse, request.errback)
         return dfd.addCallback(iterate_spider_output)
@@ -153,6 +169,8 @@ class Scraper(object):
         if not result:
             return defer_succeed(None)
         it = iter_errback(result, self.handle_spider_error, request, response, spider)
+        # iterator all result, call _process_spidermw_output with result, process
+        # all result parallel, and return deferred
         dfd = parallel(it, self.concurrent_items,
             self._process_spidermw_output, request, response, spider)
         return dfd
@@ -162,8 +180,10 @@ class Scraper(object):
         from the given spider
         """
         if isinstance(output, Request):
+            # for new request comes from spider, schedule to crawl
             self.crawler.engine.crawl(request=output, spider=spider)
         elif isinstance(output, BaseItem):
+            # if it's a item, passed to ItemPipeline to process it.
             self.slot.itemproc_size += 1
             dfd = self.itemproc.process_item(output, spider)
             dfd.addBoth(self._itemproc_finished, output, response, spider)
@@ -211,6 +231,7 @@ class Scraper(object):
         else:
             logkws = self.logformatter.scraped(output, response, spider)
             log.msg(spider=spider, **logkws)
+            # send signals to notify item scraped.
             return self.signals.send_catch_log_deferred(signal=signals.item_scraped, \
                 item=output, response=response, spider=spider)
 

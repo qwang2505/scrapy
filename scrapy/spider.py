@@ -55,6 +55,7 @@ class Spider(object_ref):
     def _set_crawler(self, crawler):
         self.crawler = crawler
         self.settings = crawler.settings
+        # connect spider_stop signal to self.stop
         crawler.signals.connect(self.close, signals.spider_closed)
 
     def start_requests(self):

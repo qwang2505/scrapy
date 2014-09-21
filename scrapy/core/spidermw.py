@@ -66,6 +66,8 @@ class SpiderMiddlewareManager(MiddlewareManager):
                     (fname(method), type(result))
             return result
 
+        # in mustbe_deferred, call the function and call callback until next
+        # reactor loop
         dfd = mustbe_deferred(process_spider_input, response)
         dfd.addErrback(process_spider_exception)
         dfd.addCallback(process_spider_output)

@@ -6,6 +6,7 @@ from scrapy.exceptions import UsageError
 
 class Command(ScrapyCommand):
 
+    # this indicates this command can be run inside projects or not
     requires_project = True
 
     def syntax(self):
@@ -54,5 +55,7 @@ class Command(ScrapyCommand):
             raise UsageError("running 'scrapy crawl' with more than one spider is no longer supported")
         spname = args[0]
 
+        # initialize crawler, and add crawl into deferred to run in
+        # next reactor loop.
         self.crawler_process.crawl(spname, **opts.spargs)
         self.crawler_process.start()

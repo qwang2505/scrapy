@@ -15,22 +15,38 @@ from scrapy import log, signals
 
 
 class Crawler(object):
+    """
+    used in CrawlerProcess.
+    """
 
     def __init__(self, spidercls, settings):
+        # spidercls is the user defined spider instance
         self.spidercls = spidercls
         self.settings = settings
+        # init a singal manager, when call it signals?
         self.signals = SignalManager(self)
+        # use this to get statistic result of program.
         self.stats = load_object(self.settings['STATS_CLASS'])(self)
+        # log formatter, just for formatting logs
         lf_cls = load_object(self.settings['LOG_FORMATTER'])
+        # what is this?
         self.logformatter = lf_cls.from_crawler(self)
+        # extensions, maybe user defined?
         self.extensions = ExtensionManager.from_crawler(self)
 
+        # I can see why crawler contains engine, but
+        # why contains a spider instance? I thought all
+        # the comunications are through engine.
         self.crawling = False
         self.spider = None
         self.engine = None
 
     @property
     def spiders(self):
+        """
+        just get spiders of this crawler.
+        :return:
+        """
         if not hasattr(self, '_spiders'):
             warnings.warn("Crawler.spiders is deprecated, use "
                           "CrawlerRunner.spiders or instantiate "
@@ -43,14 +59,24 @@ class Crawler(object):
 
     @defer.inlineCallbacks
     def crawl(self, *args, **kwargs):
+        """
+        this is the magic main process?
+        """
         assert not self.crawling, "Crawling already taking place"
         self.crawling = True
 
         try:
+            # need to create spider?
+            # initialize spider instance
             self.spider = self._create_spider(*args, **kwargs)
+            # init engine
             self.engine = self._create_engine()
+            # get start requests from spider.
             start_requests = iter(self.spider.start_requests())
+
+            # did a lot of things in open_spider, need to pay attention to.
             yield self.engine.open_spider(self.spider, start_requests)
+            # NOTICE will pause at start until engine stop.
             yield defer.maybeDeferred(self.engine.start)
         except Exception:
             self.crawling = False
@@ -73,19 +99,29 @@ class CrawlerRunner(object):
 
     def __init__(self, settings):
         self.settings = settings
+        # scrapy.spidermanager.SpiderManager
         smcls = load_object(settings['SPIDER_MANAGER_CLASS'])
+        # SpiderManager.from_settings initialize a SpiderManager instance by
+        # the given settings. In SpiderManager, there's a dict contains all
+        # the spiders in project dirs.
         self.spiders = smcls.from_settings(settings.frozencopy())
+        # initialize to empty set?
         self.crawlers = set()
+        # like an active spiders/crawler set
         self._active = set()
 
     def crawl(self, spidercls, *args, **kwargs):
+        # crawler is created when crawl been called, with a specific spider
+        # so a crawler only contains one spider.
         crawler = self._create_crawler(spidercls)
         self._setup_crawler_logging(crawler)
         self.crawlers.add(crawler)
+        # TODO will pause at crawler's crawl method
         d = crawler.crawl(*args, **kwargs)
         self._active.add(d)
 
         def _done(result):
+            # remove crawler from crawlers after finish
             self.crawlers.discard(crawler)
             self._active.discard(d)
             return result
@@ -104,6 +140,8 @@ class CrawlerRunner(object):
     def _setup_crawler_logging(self, crawler):
         log_observer = log.start_from_crawler(crawler)
         if log_observer:
+            # connect to engine_stopped signal to stop log observer when
+            # engine stopped
             crawler.signals.connect(log_observer.stop, signals.engine_stopped)
 
     def stop(self):

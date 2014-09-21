@@ -3,6 +3,9 @@ This is the Scrapy engine which controls the Scheduler, Downloader and Spiders.
 
 For more information see docs/topics/architecture.rst
 
+The engine is responsible for controlling the data flow between all components
+of the system, and triggering events when certain actions occur. See the Data
+Flow section below for more details.
 """
 import warnings
 from time import time
@@ -20,7 +23,9 @@ from scrapy.utils.reactor import CallLaterOnce
 
 
 class Slot(object):
-
+    """
+    what is this for? it's like a request queue, need to know when to use it.
+    """
     def __init__(self, start_requests, close_if_idle, nextcall, scheduler):
         self.closing = False
         self.inprogress = set() # requests in progress
@@ -49,40 +54,85 @@ class Slot(object):
 
 
 class ExecutionEngine(object):
+    """
+    This is the main engine to control data flow and actions callback.
+    Some of definations not quite clear now, need to pay attention later.
+    """
 
     def __init__(self, crawler, spider_closed_callback):
+        # TODO crawler ralated information, need to understand later.
+        # crawler is the instance of Crawler related with this engine.
         self.crawler = crawler
+        # main settings, contains lots of definations and configurations.
         self.settings = crawler.settings
+        # use signals(actually a SignalManager instance) to send all kinds
+        # of signals to interested receivers.
         self.signals = crawler.signals
+        # formatter of logging. Need to pay attention to.
         self.logformatter = crawler.logformatter
+        # TODO maybe schedule related?
+        # slot is a hard-to-describe concept, reserve for later.
         self.slot = None
+        # related spider for this engine. Normally just one spider related
+        # with one engine, one crawler.
         self.spider = None
+        # indicating the running status of engine, for controlling engine
+        # status and switch status.
         self.running = False
+        # same with running
         self.paused = False
+        # settings defined in crawler, and scheduler, downloader are configured
+        # in settings in crawler. So the engine is constructed with crawler.
+        # not like I think.
         self.scheduler_cls = load_object(self.settings['SCHEDULER'])
         downloader_cls = load_object(self.settings['DOWNLOADER'])
         self.downloader = downloader_cls(crawler)
+        # TODO what is scraper for?
+        # scraper is a concept more like extractor or linkcrawler, it's
+        # for extracting useful information from downloaded web pages.
         self.scraper = Scraper(crawler)
+        # TODO a concurrent spider? what is this for?
         self._concurrent_spiders = self.settings.getint('CONCURRENT_SPIDERS', 1)
         if self._concurrent_spiders != 1:
             warnings.warn("CONCURRENT_SPIDERS settings is deprecated, use " \
                 "Scrapyd max_proc config instead", ScrapyDeprecationWarning)
+
+        # TODO spider closed callback? like a error callback?
         self._spider_closed_callback = spider_closed_callback
 
+    # NOTICE pay attention to inlineCallbacks, this decorator convert a normal
+    # generator into in-ordered async callbacks. This is like a simulated callback
+    # chain.
     @defer.inlineCallbacks
     def start(self):
-        """Start the execution engine"""
+        """Start the execution engine.
+
+        Not much things been done in start, just send signals to other part, and
+        set a variable to indicating the engine is running.
+        """
         assert not self.running, "Engine already running"
+        # record a start time, must used in logging.
         self.start_time = time()
+        # before starting, first send engine started signal to all listeners(crawlers, maybe?).
+        # use generator inside inlineCallbacks make this sync action, that means, generator
+        # function will resume after all signals been sent.
         yield self.signals.send_catch_log_deferred(signal=signals.engine_started)
+        # engine_started signals been sent, set variable value.
         self.running = True
+        # set an empty callback to pause the start function. This function
+        # is a generator and decorated with inlineCallbacks. Here because this
+        # deferred will only be fired in stop() method, so will pause here, until
+        # engine been stopped.
+        # TODO we got twited reactor, why still do this way?
         self._closewait = defer.Deferred()
         yield self._closewait
 
     def stop(self):
         """Stop the execution engine gracefully"""
         assert self.running, "Engine not running"
+        # why don't set to false after close all spiders?
         self.running = False
+        # async close all spiders
         dfd = self._close_all_spiders()
         return dfd.addBoth(lambda _: self._finish_stopping_engine())
 
@@ -100,6 +150,7 @@ class ExecutionEngine(object):
             return
 
         if self.paused:
+            # run again 5 seconds later
             slot.nextcall.schedule(5)
             return
 
@@ -123,6 +174,7 @@ class ExecutionEngine(object):
             self._spider_idle(spider)
 
     def _needs_backout(self, spider):
+        # TODO what is backout?
         slot = self.slot
         return not self.running \
             or slot.closing \
@@ -171,12 +223,18 @@ class ExecutionEngine(object):
         return not bool(self.slot)
 
     def crawl(self, request, spider):
+        """
+        start to schedule crawling request, add into schedule queue.
+        """
         assert spider in self.open_spiders, \
             "Spider %r not opened when crawling: %s" % (spider.name, request)
         self.schedule(request, spider)
         self.slot.nextcall.schedule()
 
     def schedule(self, request, spider):
+        """
+        add the passing request into schedule queue
+        """
         self.signals.send_catch_log(signal=signals.request_scheduled,
                 request=request, spider=spider)
         return self.slot.scheduler.enqueue_request(request)
@@ -189,7 +247,9 @@ class ExecutionEngine(object):
         return d
 
     def _downloaded(self, response, slot, request, spider):
+        # after downloading, remove request from slot
         slot.remove_request(request)
+        # maybe a redirect request, add into slot to process request later.
         return self.download(response, spider) \
                 if isinstance(response, Request) else response
 
@@ -220,16 +280,30 @@ class ExecutionEngine(object):
         assert self.has_capacity(), "No free spider slot when opening %r" % \
             spider.name
         log.msg("Spider opened", spider=spider)
+        # nextcall is a CallLaterOnce instance, the passing function will
+        # be run in next reactor loop.
         nextcall = CallLaterOnce(self._next_request, spider)
+        # initilize scheduler
         scheduler = self.scheduler_cls.from_crawler(self.crawler)
+        # process requests
         start_requests = yield self.scraper.spidermw.process_start_requests(start_requests, spider)
         slot = Slot(start_requests, close_if_idle, nextcall, scheduler)
         self.slot = slot
         self.spider = spider
+        # why yield this? open never returns deferred object. I guess it's just
+        # to keep same with others, or for backup compatible, it's no hurt to
+        # yield a non-deferred object.
+        # in scheduler.open, just initialize queues for later usage.
         yield scheduler.open(spider)
+        # open_spider in scraper allocate a slot for spider and then fire
+        # execution of all open_spider method in middlewares and then return
+        # a DeferredList.
         yield self.scraper.open_spider(spider)
+        # open_spider in statscol do nothing.
         self.crawler.stats.open_spider(spider)
+        # send spider opened signal.
         yield self.signals.send_catch_log_deferred(signals.spider_opened, spider=spider)
+        # start schedule to run, will run in next reactor loop
         slot.nextcall.schedule()
 
     def _spider_idle(self, spider):

@@ -24,6 +24,7 @@ class ItemPipelineManager(MiddlewareManager):
         return build_component_list(settings['ITEM_PIPELINES_BASE'], item_pipelines)
 
     def _add_middleware(self, pipe):
+        # add process_item middleware.
         super(ItemPipelineManager, self)._add_middleware(pipe)
         if hasattr(pipe, 'process_item'):
             self.methods['process_item'].append(pipe.process_item)

@@ -24,10 +24,15 @@ except ImportError:
 
 # signal to update telnet variables
 # args: telnet_vars
+# nobody is listening this signal
 update_telnet_vars = object()
 
 
 class TelnetConsole(protocol.ServerFactory):
+    """
+    It's an extension, configured in default_settings.py, will be initialized
+    in while initialize MiddlewareManager.
+    """
 
     def __init__(self, crawler):
         if not crawler.settings.getbool('TELNETCONSOLE_ENABLED'):
@@ -36,6 +41,8 @@ class TelnetConsole(protocol.ServerFactory):
         self.noisy = False
         self.portrange = [int(x) for x in crawler.settings.getlist('TELNETCONSOLE_PORT')]
         self.host = crawler.settings['TELNETCONSOLE_HOST']
+        # connect to engine_start and engine_stop signal, start_listening when
+        # engine start, and stop listening when engine stop.
         self.crawler.signals.connect(self.start_listening, signals.engine_started)
         self.crawler.signals.connect(self.stop_listening, signals.engine_stopped)
 

@@ -50,12 +50,22 @@ class MiddlewareManager(object):
         return cls.from_settings(crawler.settings, crawler)
 
     def _add_middleware(self, mw):
+        # if MiddlewareManager is a base class for all middleware manager,
+        # why here just add open_spider and close spider?
+        # oops, that's optional, my bad.
         if hasattr(mw, 'open_spider'):
             self.methods['open_spider'].append(mw.open_spider)
         if hasattr(mw, 'close_spider'):
             self.methods['close_spider'].insert(0, mw.close_spider)
 
     def _process_parallel(self, methodname, obj, *args):
+        # this is very hard to understand, need to pay attention on
+        # process_parallel.
+        # for now, just see methodname=open_spider. There are multiple
+        # middlewares, and self.methods["open_spider"] is a list, so
+        # maybe need to parallel execute these middleware methods, and
+        # return a DeferredList? But when will callback been called?
+        # after all execution of methods?
         return process_parallel(self.methods[methodname], obj, *args)
 
     def _process_chain(self, methodname, obj, *args):

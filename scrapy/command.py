@@ -12,6 +12,8 @@ from scrapy.exceptions import UsageError
 class ScrapyCommand(object):
 
     requires_project = False
+    # every command contains a crawler process, base class
+    # defined in scrapy/crawler.py
     crawler_process = None
 
     # default settings to be used for this command instead of global defaults
